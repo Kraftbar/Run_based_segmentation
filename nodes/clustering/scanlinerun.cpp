@@ -89,6 +89,10 @@ private:
     ros::Publisher cluster_points_pub_;
     ros::Publisher ring_points_pub_;
 
+    const double res_h=2023;
+    const double ang_v_deg=360.0/res_h;
+    const double res_v=63;
+    
     std::string point_topic_;
 
     int sensor_model_;// also means number of sensor scan line.
@@ -141,7 +145,7 @@ ScanLineRun::ScanLineRun():node_handle_("~"){
     node_handle_.param<std::string>("point_topic", point_topic_, "/all_points");
     ROS_INFO("point_topic: %s", point_topic_.c_str());
 
-    node_handle_.param("sensor_model", sensor_model_, 32);
+    node_handle_.param("sensor_model", sensor_model_, 64);
     ROS_INFO("Sensor Model: %d", sensor_model_);
     
     // Init Ptrs with vectors
@@ -153,8 +157,8 @@ ScanLineRun::ScanLineRun():node_handle_("~"){
     // Init LiDAR frames with vectors and points
     SLRPointXYZIRL p_dummy;
     p_dummy.intensity = -1;// Means unoccupy by any points
-    laser_row_ = std::vector<SLRPointXYZIRL>(2251, p_dummy);
-    laser_frame_ = std::vector<std::vector<SLRPointXYZIRL> >(32, laser_row_);
+    laser_row_ = std::vector<SLRPointXYZIRL>(res_h, p_dummy);
+    laser_frame_ = std::vector<std::vector<SLRPointXYZIRL> >(64, laser_row_);
     
     // Init runs, idx 0 for interest point, and idx for ground points
     max_label_ = 1;
@@ -481,6 +485,13 @@ void ScanLineRun::velodyne_callback_(const sensor_msgs::PointCloud2ConstPtr& in_
     pcl::PointCloud<SLRPointXYZIRL> laserCloudIn;
     pcl::fromROSMsg(*in_cloud_msg, laserCloudIn);
 
+
+
+
+
+   
+
+    ROS_INFO("ROS point size: %i", laserCloudIn.points.size());
     /// Clear and init.
     // Clear runs in the previous scan.
     max_label_ = 1;
@@ -493,8 +504,8 @@ void ScanLineRun::velodyne_callback_(const sensor_msgs::PointCloud2ConstPtr& in_
     // Init laser frame.
     SLRPointXYZIRL p_dummy;
     p_dummy.intensity = -1;
-    laser_row_ = std::vector<SLRPointXYZIRL> (2251, p_dummy);
-    laser_frame_ = std::vector<std::vector<SLRPointXYZIRL> >(32, laser_row_);
+    laser_row_ = std::vector<SLRPointXYZIRL> (res_h, p_dummy);
+    laser_frame_ = std::vector<std::vector<SLRPointXYZIRL> >(64, laser_row_);
     
     // Init non-ground index holder.
     for(int i=0;i<sensor_model_;i++){
@@ -516,17 +527,28 @@ void ScanLineRun::velodyne_callback_(const sensor_msgs::PointCloud2ConstPtr& in_
             point.intensity = 0;
 #endif
             // Compute and angle. 
+            double low=std::round(res_h*0.25);
+            double high=std::round(res_h*0.75);
             // @Note: In this case, `x` points right and `y` points forward.
             range = sqrt(point.x*point.x + point.y*point.y + point.z*point.z);
+            
+            ROS_INFO("ROS out range: %d", range);
+            ROS_INFO("ROS out ang: %f", ang_v_deg);
+            ROS_INFO("ROS out point.x: %d", point.x);
+            ROS_INFO("ROS out point.y: %d", point.y);
+            ROS_INFO("ROS out asin: %f", asin(point.y/range));
+            ROS_INFO("ROS out asin calc: %f", ang_v_deg*(3.14/180.0));
+            
+
             if(point.x>=0){
-                row = int(563 - asin(point.y/range)/0.00279111);
+                row = std::round(low - asin(point.y/range)/(ang_v_deg*(3.14/180.0)) );
             }else if(point.x<0 && point.y <=0){
-                row = int(1688 + asin(point.y/range)/0.00279111);
+                row = std::round(high + asin(point.y/range)/(ang_v_deg*(3.14/180.0)) );
             }else {
-                row = int(1688 + asin(point.y/range)/0.00279111);
+                row = std::round(high  + asin(point.y/range)/(ang_v_deg*(3.14/180.0)) );
             }
 
-            if(row>2250||row<0){
+            if(row>(res_h-1)||row<0){
                 ROS_ERROR("Row: %d is out of index.", row);
                 return;
             }else{

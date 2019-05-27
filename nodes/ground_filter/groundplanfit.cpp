@@ -13,17 +13,24 @@
 */
 
 #include <iostream>
+#include <queue> 
+#include <numeric>
+
+
 // For disable PCL complile lib, to use PointXYZIR    
 #define PCL_NO_PRECOMPILE
 
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
+#include "sensor_msgs/Imu.h"
 
 #include <pcl_ros/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/filter.h>
 #include <pcl/point_types.h>
 #include <pcl/common/centroid.h>
+#include <pcl/common/transforms.h>
+
 
 #include <velodyne_pointcloud/point_types.h>
 
@@ -66,6 +73,14 @@ pcl::PointCloud<VPoint>::Ptr g_not_ground_pc(new pcl::PointCloud<VPoint>());
 pcl::PointCloud<SLRPointXYZIRL>::Ptr g_all_pc(new pcl::PointCloud<SLRPointXYZIRL>());
 
 
+
+
+float x_imu=0;
+float y_imu=0;
+float z_imu=0;
+float filtered=1;
+std::deque<float> loggAnglex;
+std::deque<float> loggAngley; 
 /*
     @brief Compare function to sort points. Here use z axis.
     @return z-axis accent
@@ -73,6 +88,17 @@ pcl::PointCloud<SLRPointXYZIRL>::Ptr g_all_pc(new pcl::PointCloud<SLRPointXYZIRL
 bool point_cmp(VPoint a, VPoint b){
     return a.z<b.z;
 }
+
+/*
+    #### added IMU 
+    #### added IMU 
+*/
+
+
+
+
+
+
 
 /*
     @brief Ground Plane fitting ROS Node.
@@ -91,11 +117,13 @@ public:
 private:
     ros::NodeHandle node_handle_;
     ros::Subscriber points_node_sub_;
+    ros::Subscriber imu_node_sub_;
     ros::Publisher ground_points_pub_;
     ros::Publisher groundless_points_pub_;
     ros::Publisher all_points_pub_;
 
     std::string point_topic_;
+    std::string imu_topic_;
 
     int sensor_model_;
     double sensor_height_;
@@ -107,8 +135,10 @@ private:
 
 
     void velodyne_callback_(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg);
+    void chatterCallback(const sensor_msgs::Imu::ConstPtr& msg);
+
     void estimate_plane_(void);
-    void extract_initial_seeds_(const pcl::PointCloud<VPoint>& p_sorted);
+    void extract_initial_seeds_(const pcl::PointCloud<VPoint>& p_sorted);  
 
     // Model parameter for ground plane fitting
     // The ground plane model is: ax+by+cz+d=0
@@ -126,8 +156,16 @@ private:
 GroundPlaneFit::GroundPlaneFit():node_handle_("~"){
     // Init ROS related
     ROS_INFO("Inititalizing Ground Plane Fitter...");
-    node_handle_.param<std::string>("point_topic", point_topic_, "/velodyne_points");
+
+
+    node_handle_.param<std::string>("point_topic", point_topic_, "/os1_cloud_node/points");
     ROS_INFO("Input Point Cloud: %s", point_topic_.c_str());
+
+    node_handle_.param<std::string>("point_topic", imu_topic_, "/os1_cloud_node/imu");
+    ROS_INFO("Input IMU: %s", imu_topic_.c_str());
+
+
+
 
     node_handle_.param("sensor_model", sensor_model_, 32);
     ROS_INFO("Sensor Model: %d", sensor_model_);
@@ -152,7 +190,10 @@ GroundPlaneFit::GroundPlaneFit():node_handle_("~"){
 
     // Listen to velodyne topic
     points_node_sub_ = node_handle_.subscribe(point_topic_, 2, &GroundPlaneFit::velodyne_callback_, this);
-    
+    // Listen to the imu
+
+     imu_node_sub_= node_handle_.subscribe(imu_topic_, 1000, &GroundPlaneFit::chatterCallback,this);
+
     // Publish Init
     std::string no_ground_topic, ground_topic;
     node_handle_.param<std::string>("no_ground_point_topic", no_ground_topic, "/points_no_ground");
@@ -163,6 +204,26 @@ GroundPlaneFit::GroundPlaneFit():node_handle_("~"){
     ground_points_pub_ = node_handle_.advertise<sensor_msgs::PointCloud2>(ground_topic, 2);
     all_points_pub_ =  node_handle_.advertise<sensor_msgs::PointCloud2>("/all_points", 2);
 }
+
+
+/*
+##### ADDED
+##### ADDED  
+*/
+void GroundPlaneFit::chatterCallback(const sensor_msgs::Imu::ConstPtr& msg)
+{
+  x_imu=msg->linear_acceleration.x;
+  y_imu=msg->linear_acceleration.y;
+  z_imu=msg->linear_acceleration.z;
+
+
+
+  
+
+}
+
+
+
 
 /*
     @brief The function to estimate plane model. The
@@ -235,11 +296,70 @@ void GroundPlaneFit::extract_initial_seeds_(const pcl::PointCloud<VPoint>& p_sor
     ->error points removal -> extract ground seeds -> ground plane fit mainloop
 */
 void GroundPlaneFit::velodyne_callback_(const sensor_msgs::PointCloud2ConstPtr& in_cloud_msg){
+
+    std::cout<<"----------------"<<std::endl;
+    std::cout<<in_cloud_msg->fields[1]<<std::endl;
+    std::cout<<"----------------"<<std::endl;
+    std::cout<<in_cloud_msg->fields[2]<<std::endl;
+    std::cout<<"----------------"<<std::endl;
+    std::cout<<in_cloud_msg->fields[3]<<std::endl;
+    std::cout<<"----------------"<<std::endl;
+    std::cout<<in_cloud_msg->fields[4]<<std::endl;
+    std::cout<<"----------------"<<std::endl;
+    std::cout<<in_cloud_msg->point_step<<std::endl;
+
+
+// sensor_msgs::PointCloud2 msg=in_cloud_msg;
+// //   msg.fields.resize(5);
+// //   msg.fields[0].name = "x";
+// //   msg.fields[0].offset = 0;
+// //   msg.fields[0].datatype = sensor_msgs::PointField::FLOAT32;
+// //   msg.fields[0].count = 1;
+// //   msg.fields[1].name = "y";
+// //   msg.fields[1].offset = 4;
+// //   msg.fields[1].datatype = sensor_msgs::PointField::FLOAT32;
+// //   msg.fields[1].count = 1;
+// //   msg.fields[2].name = "z";
+// //   msg.fields[2].offset = 8;
+// //   msg.fields[2].datatype = sensor_msgs::PointField::FLOAT32;
+// //   msg.fields[2].count = 1;
+// //   msg.fields[3].name = "intensity";
+// //   msg.fields[3].offset = 16;
+// //   msg.fields[3].datatype = sensor_msgs::PointField::FLOAT32;
+// //   msg.fields[3].count = 1;
+//    msg.fields[4].name = "ring";
+// //   msg.fields[4].offset = 20;
+//    msg.fields[4].datatype = sensor_msgs::PointField::UINT16;
+// //   msg.fields[4].count = 1;
+//    msg.data.resize(1 * 32, 0x00);
+//    msg.point_step = 32;
+//    msg.row_step = msg.data.size();
+//    msg.height = 1;
+//    msg.width = msg.row_step / 32;
+// //   msg.is_bigendian = false;
+// //   msg.is_dense = true;
+    
+// //    ((uint16_t*)msg.data)[8] = ;
+ 
+ 
     // 1.Msg to pointcloud
     pcl::PointCloud<VPoint> laserCloudIn;
     pcl::fromROSMsg(*in_cloud_msg, laserCloudIn);
     pcl::PointCloud<VPoint> laserCloudIn_org;
     pcl::fromROSMsg(*in_cloud_msg, laserCloudIn_org);
+    
+    
+     for(size_t i=0;i<laserCloudIn.points.size();i++){
+
+        laserCloudIn.points[i].ring= i % 64;
+            
+    }
+    
+    
+     for(size_t i=0;i<laserCloudIn_org.points.size();i++){
+        laserCloudIn_org.points[i].ring= i % 64;
+    }
+
     // For mark ground points and hold all points
     SLRPointXYZIRL point;
     for(size_t i=0;i<laserCloudIn.points.size();i++){
@@ -251,6 +371,62 @@ void GroundPlaneFit::velodyne_callback_(const sensor_msgs::PointCloud2ConstPtr& 
         point.label = 0u;// 0 means uncluster
         g_all_pc->points.push_back(point);
     }
+    
+    // adjust
+    if(0){
+        Eigen::Matrix4f transform_x = Eigen::Matrix4f::Identity();
+        Eigen::Matrix4f transform_y = Eigen::Matrix4f::Identity();
+
+        float tmpy_rad=atan(y_imu/z_imu);
+
+
+        // TODO: make it not trash
+        loggAngley.push_back(tmpy_rad);
+        if(loggAngley.size()==50){
+            float sum_of_elems=0;
+            for(int i =0; i< loggAngley.size();i++)
+                sum_of_elems =sum_of_elems+ loggAngley[i];
+            //tmpy_rad=sum_of_elems/loggAngley.size();
+        loggAngley.pop_front();
+        }
+
+
+        // about the  x axis
+        transform_x (1,1) = cos (tmpy_rad);
+        transform_x (1,2) = -sin(tmpy_rad);
+        transform_x (2,1) = sin (tmpy_rad);
+        transform_x (2,2) = cos (tmpy_rad);
+
+        float tmpx_rad=atan(x_imu/z_imu);
+
+
+
+            // TODO: make it not trash
+        loggAnglex.push_back(tmpx_rad);
+        if(loggAnglex.size()==50){
+            float sum_of_elems=0;
+            for(int i =0; i< loggAnglex.size();i++)
+                sum_of_elems =sum_of_elems+ loggAnglex[i];
+            //tmpx_rad=sum_of_elems/loggAnglex.size();
+        loggAnglex.pop_front();
+        }
+
+    
+
+
+
+        // about the  y axis
+        transform_y (0,0) = cos (tmpx_rad     );
+        transform_y (0,2) = sin(tmpx_rad    );
+        transform_y (2,0) = -sin (tmpx_rad );
+        transform_y (2,2) = cos (tmpx_rad   );
+
+
+
+        pcl::transformPointCloud (laserCloudIn_org, laserCloudIn_org, transform_y);
+    }
+
+
     //std::vector<int> indices;
     //pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn,indices);
     // 2.Sort on Z-axis value.
